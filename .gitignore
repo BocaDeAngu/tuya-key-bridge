@@ -16,3 +16,4 @@ devices.cache
 cache.key
 .env
 .env.*
+snapshot.json
