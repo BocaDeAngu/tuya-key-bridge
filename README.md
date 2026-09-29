@@ -10,7 +10,7 @@ Sem conta de desenvolvedor Tuya, sem Access ID/Secret — o login é **seu** QR 
 ## Por que existe
 
 O [cortemes](https://github.com/BocaDeAngu/cortemes) orquestra este processo como
-dependência (`pip install git+https://github.com/BocaDeAngu/tuya-local-key@v0.1.0-boca`)
+dependência (`pip install git+https://github.com/BocaDeAngu/tuya-key-bridge@v0.1.0-boca`)
 para importar localKeys direto na página de carregadores — sem terminal, sem CSV.
 
 ## Uso
@@ -47,7 +47,7 @@ Cada device vem com `name`, `id`, `local_key`, `ip`, `online`, `category`,
 ## Instalação
 
 ```bash
-pip install git+https://github.com/BocaDeAngu/tuya-local-key@v0.1.0-boca
+pip install git+https://github.com/BocaDeAngu/tuya-key-bridge@v0.1.0-boca
 ```
 
 Requer Python 3.8+. Dependências: `tuya-device-sharing-sdk>=0.2.15` (MIT, Tuya) e `qrcode[pil]`.
