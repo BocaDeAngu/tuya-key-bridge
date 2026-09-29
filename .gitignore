@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# Artefatos locais / segredos (nunca comitar)
+tuya-bridge-qr.png
+tuya-login-qr.png
+*.csv
+session.json
+*session*.json
+devices.cache
+cache.key
+.env
+.env.*
