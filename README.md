@@ -16,7 +16,12 @@ para importar localKeys direto na página de carregadores — sem terminal, sem 
 ## Uso
 
 ```bash
+# Importar keys (QR login — só da 1ª vez; com sessão viva lista direto)
 python -m boca_tuya_bridge run --user-code X --qr-png out.png [--timeout 150] [--session caminho] [--relogin]
+
+# Controle local (tinytuya, protocolo 3.1–3.5) — localKey via STDIN (não argv)
+echo '{"key":"..."}' | python -m boca_tuya_bridge status --device-id ID --ip 192.168.x.x [--dp 1] [--versao 3.5]
+echo '{"key":"..."}' | python -m boca_tuya_bridge set --device-id ID --ip 192.168.x.x --ligar true [--dp 1]
 ```
 
 User Code: **Smart Life → Me → Account and Security → User Code**.
@@ -31,6 +36,15 @@ User Code: **Smart Life → Me → Account and Security → User Code**.
 | `{"event":"qr","png":"C:\\...\\out.png"}` | QR gerado — escanear no Smart Life (+ → Scan → Confirmar login) |
 | `{"event":"aguardando","restante":137}` | a cada ~2s até o app confirmar |
 | `{"event":"erro","mensagem":"..."}` | qualquer falha (exit ≠ 0) |
+
+`status`/`set` respondem um único evento:
+
+```json
+{"event":"status","ligada":true,"dps":{"1":true,"20":1199,...}}
+```
+
+`dps` = estado real lido da tomada (`set` sempre relê depois de comandar); DP 1
+é o relé típico (`--dp`), 19/20/22 são metering (corrente/tensão/potência).
 
 Códigos de saída: `0` ok · `2` uso inválido · `3` QR expirou · `1` erro.
 

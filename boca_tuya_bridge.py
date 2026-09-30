@@ -11,6 +11,8 @@ o registro público do app Home Assistant vem do ecossistema HA/LocalTuya.
 Uso orquestrado (cortemes chama e lê stdout):
 
     python -m boca_tuya_bridge run --user-code X --qr-png out.png [opções]
+    python -m boca_tuya_bridge status --device-id X --ip Y --dp 1   # key via stdin
+    python -m boca_tuya_bridge set --device-id X --ip Y --dp 1 --ligar true
 
 Saída: NDJSON — uma linha JSON por evento, sem texto solto:
 
@@ -21,6 +23,13 @@ Saída: NDJSON — uma linha JSON por evento, sem texto solto:
     {"event":"aguardando","restante":137}             # a cada poll (~2s) até confirmar
     {"event":"devices","devices":[{...}]}             # confirmado no app
     {"event":"erro","mensagem":"..."}                 # qualquer falha
+
+Controle local (status/set): "status" também sai pós-comando em `set`:
+
+    {"event":"status","ligada":true,"dps":{"1":true,...}}  # dps = estado real lido
+
+A localKey do status/set vai por STDIN (JSON {"key":"..."}) — nunca na argv,
+que fica visível no process list.
 
 Códigos de saída: 0 ok · 2 uso inválido · 3 QR expirou · 1 erro.
 
@@ -53,6 +62,11 @@ DEFAULT_TIMEOUT = 150  # o QR do Tuya expira rápido (~1–2 min)
 TOKEN_FIELDS = ("t", "uid", "expire_time", "access_token", "refresh_token")
 
 REQUEST_TIMEOUT_SECONDS = 60
+
+# Controle local (tinytuya): tuyapi (Node, 2021) não fala protocolo 3.5 —
+# tomadas novas ignoram o handshake dele; tinytuya 3.5 lê (prova 2026-10).
+VERSAO_PADRAO = "3.5"
+SOCKET_TIMEOUT_PADRAO = 5
 
 
 def emitir(objeto):
@@ -214,6 +228,54 @@ def device_payload(device):
 
 
 # --------------------------------------------------------------------------- #
+# Controle local (tinytuya, TCP 6668) — status e ligar/desligar
+# --------------------------------------------------------------------------- #
+def _device_local(device_id, ip, key, versao, timeout):
+    import tinytuya
+
+    if not ip:
+        raise RuntimeError("IP da tomada na LAN é obrigatório para o controle local")
+    return tinytuya.OutletDevice(device_id, ip, key, version=versao, connection_timeout=timeout)
+
+
+def _dps_lidos(d):
+    """Estado real (todos os DPs, metering incluído); chaves como str."""
+    st = d.status() or {}
+    return {str(k): v for k, v in (st.get("dps") or {}).items()}
+
+
+def status_local(device_id, ip, key, dp, versao=VERSAO_PADRAO, timeout=SOCKET_TIMEOUT_PADRAO):
+    d = _device_local(device_id, ip, key, versao, timeout)
+    dps = _dps_lidos(d)
+    return {"ligada": dps.get(str(dp)) is True, "dps": dps}
+
+
+def comando_local(device_id, ip, key, dp, ligar, versao=VERSAO_PADRAO, timeout=SOCKET_TIMEOUT_PADRAO):
+    d = _device_local(device_id, ip, key, versao, timeout)
+    d.set_status(bool(ligar), dp)
+    dps = _dps_lidos(d)  # reler: agir só depois de ler o estado real (regra 5 da 0331)
+    return {"ligada": dps.get(str(dp)) is True, "dps": dps}
+
+
+def _key_de_stdin(args):
+    """localKey: --key existe para teste manual, mas o caminho normal é stdin
+    (argv fica no process list/history; stdin não). stdin recebe JSON {\"key\":\"...\"}."""
+    if args.key:
+        return args.key
+    linha = sys.stdin.readline().strip()
+    if not linha:
+        raise RuntimeError("localKey não fornecida (stdin JSON {\"key\":\"...\"} ou --key)")
+    try:
+        dados = json.loads(linha)
+        key = dados.get("key") if isinstance(dados, dict) else None
+    except json.JSONDecodeError:
+        key = None
+    if not key or not isinstance(key, str):
+        raise RuntimeError('stdin deve ser JSON {"key":"..."}')
+    return key
+
+
+# --------------------------------------------------------------------------- #
 # Fluxo principal
 # --------------------------------------------------------------------------- #
 def run(args):
@@ -275,15 +337,41 @@ def run(args):
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="boca_tuya_bridge", description="Ponte NDJSON de localKeys Smart Life/Tuya (QR login, sem dev account)")
-    p.add_argument("comando", choices=["run"], help="único comando: run")
+    p.add_argument("comando", choices=["run", "status", "set"], help="run=importar keys · status=ler tomada · set=ligar/desligar")
     p.add_argument("--user-code", help="User Code do Smart Life (Me > Account and Security)")
+    p.add_argument("--device-id", help="[status/set] id do device")
+    p.add_argument("--ip", help="[status/set] IP do device na LAN")
+    p.add_argument("--key", help="[status/set] localKey (preferir stdin — argv fica no history/process list)")
+    p.add_argument("--dp", type=int, default=1, help="[status/set] DP do relé (default 1)")
+    p.add_argument("--ligar", choices=("true", "false"), help="[set] true=liga, false=desliga")
+    p.add_argument("--versao", choices=("3.1", "3.3", "3.4", "3.5"), default=VERSAO_PADRAO, help="[status/set] protocolo do device")
+    p.add_argument("--timeout", type=int, default=None, help="[run] s aguardando scan (150) · [status/set] timeout do socket em s (5)")
     p.add_argument("--qr-png", default=DEFAULT_QR_PNG, help="onde salvar o PNG do QR")
     p.add_argument("--session", default=DEFAULT_SESSION, help="cache da sessão (600)")
     p.add_argument("--qr-scheme", choices=["smartlife", "tuyaSmart"], default="smartlife", help="prefixo do QR (Smart Life lê ambos)")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="segundos aguardando o scan")
     p.add_argument("--relogin", action="store_true", help="ignora a sessão em cache e pede novo QR")
     args = p.parse_args(argv)
 
+    if args.comando in ("status", "set"):
+        try:
+            if not args.device_id:
+                emitir({"event": "erro", "mensagem": "--device-id é obrigatório"})
+                return 2
+            key = _key_de_stdin(args)
+            timeout = SOCKET_TIMEOUT_PADRAO if args.timeout is None else args.timeout
+            if args.comando == "status":
+                emitir({"event": "status", **status_local(args.device_id, args.ip, key, args.dp, args.versao, timeout)})
+            else:
+                if args.ligar is None:
+                    emitir({"event": "erro", "mensagem": "--ligar true|false é obrigatório"})
+                    return 2
+                emitir({"event": "status", **comando_local(args.device_id, args.ip, key, args.dp, args.ligar == "true", args.versao, timeout)})
+            return 0
+        except Exception as e:
+            emitir({"event": "erro", "mensagem": str(e)})
+            return 1
+
+    args.timeout = DEFAULT_TIMEOUT if args.timeout is None else args.timeout  # run: timeout do QR
     try:
         return run(args)
     except KeyboardInterrupt:
