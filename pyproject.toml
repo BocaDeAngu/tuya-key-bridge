@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "boca-tuya-bridge"
-version = "0.2.0"
-description = "Ponte NDJSON de localKeys Smart Life/Tuya via QR login (sem dev account) — reimplementação sobre o SDK oficial."
+version = "0.2.1"
+description = "NDJSON bridge of Smart Life/Tuya localKeys via QR login (no dev account) — clean-room reimplementation on the official SDK, plus local control (tinytuya, protocol 3.5)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.8"

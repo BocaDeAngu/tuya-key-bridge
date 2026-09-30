@@ -1,75 +1,84 @@
-# boca_tuya_bridge — ponte NDJSON de localKeys Smart Life/Tuya
+# boca-tuya-bridge — Tuya / Smart Life localKeys without a developer account
 
-**Reimplementação independente (MIT) sobre o [SDK oficial da Tuya](https://github.com/tuya/tuya-device-sharing-sdk) (MIT).**
-Não é fork nem contém código do [vineetchoudhary/tuya-local-key](https://github.com/vineetchoudhary/tuya-local-key)
-(sem licença); a ideia do login por QR com o registro público do app **Home Assistant**
-(`HA_3y9q4ak7g4ephrvke` / `haauthorize`, publicada no core do HA e do tuya-local) vem do ecossistema HA/LocalTuya.
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg) ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 
-Sem conta de desenvolvedor Tuya, sem Access ID/Secret — o login é **seu** QR confirmado no **seu** app.
+Get the **localKey** of your Tuya / Smart Life devices by scanning a QR with **your own app** — no developer account, no Access ID/Secret. Also control devices **locally over your LAN**, including **protocol 3.5** plugs that ignore older Node libraries (tuyapi).
 
-## Por que existe
+Independent clean-room reimplementation (MIT) on top of Tuya's official [tuya-device-sharing-sdk](https://github.com/tuya/tuya-device-sharing-sdk) (MIT). Not a fork of [vineetchoudhary/tuya-local-key](https://github.com/vineetchoudhary/tuya-local-key) (unlicensed — no code derived); the QR-login idea with Home Assistant's public app registration (`HA_3y9q4ak7g4ephrvke` / `haauthorize`, published in the HA core and in tuya-local) comes from the HA/LocalTuya ecosystem.
 
-O [cortemes](https://github.com/BocaDeAngu/cortemes) orquestra este processo como
-dependência (`pip install git+https://github.com/BocaDeAngu/tuya-key-bridge@v0.1.0-boca`)
-para importar localKeys direto na página de carregadores — sem terminal, sem CSV.
+## Quickstart
 
-## Uso
+Requires Python 3.8+. With [pipx](https://pipx.pypa.io/) (recommended — isolated env, command on PATH):
 
 ```bash
-# Importar keys (QR login — só da 1ª vez; com sessão viva lista direto)
-python -m boca_tuya_bridge run --user-code X --qr-png out.png [--timeout 150] [--session caminho] [--relogin]
-
-# Controle local (tinytuya, protocolo 3.1–3.5) — localKey via STDIN (não argv)
-echo '{"key":"..."}' | python -m boca_tuya_bridge status --device-id ID --ip 192.168.x.x [--dp 1] [--versao 3.5]
-echo '{"key":"..."}' | python -m boca_tuya_bridge set --device-id ID --ip 192.168.x.x --ligar true [--dp 1]
+pipx install git+https://github.com/BocaDeAngu/tuya-key-bridge.git
+boca-tuya-bridge print --user-code X
 ```
 
-User Code: **Smart Life → Me → Account and Security → User Code**.
+(or `pip install git+https://github.com/BocaDeAngu/tuya-key-bridge.git`)
 
-### Contrato de saída (NDJSON no stdout — uma linha JSON por evento)
+- **User Code**: Smart Life → Me → Account and Security → User Code.
+- **First run**: the QR opens in your image viewer — scan it in the Smart Life app (Me → Scan → Confirm login). The session is cached afterwards, so the next runs list your devices instantly, no QR.
+- The table shows `name · device id · ip · online · localKey`:
 
-| Evento | Quando |
+```text
+1 device(s) in your account:
+  Plasma1-tomada  eb7ea45d972fc88a4fekp4  ip 192.168.0.148  online  key XXXXXXXXXXXXXXXX
+```
+
+## Control locally (no cloud round-trip)
+
+`status` / `set` talk straight to the device over your LAN (TCP 6668, [tinytuya](https://github.com/jasonacox/tinytuya), protocols 3.1–3.5). The key goes via **stdin**, never argv:
+
+```bash
+echo '{"key":"YOURKEY"}' | boca-tuya-bridge status --device-id ID --ip 192.168.1.50
+echo '{"key":"YOURKEY"}' | boca-tuya-bridge set --device-id ID --ip 192.168.1.50 --ligar true
+```
+
+- `--ligar true|false` = on/off; `set` always re-reads the real state right after commanding.
+- DP 1 is the typical relay (`--dp`); DPs 19/20/22 are metering (current/voltage/power).
+
+> **Device ignores every handshake?** Newer plugs speak **protocol 3.5** — tinytuya handles it; older Node libraries (tuyapi ≤ 7.x, 2021) don't. That is exactly the problem this bridge was built around: use the subcommands above instead of tuyapi.
+
+## Machine mode (NDJSON)
+
+The `run` subcommand is the machine-to-machine interface — [cortemes](https://github.com/BocaDeAngu/cortemes) consumes it to import keys into its admin UI with zero terminal friction:
+
+```bash
+python -m boca_tuya_bridge run --user-code X --qr-png out.png [--timeout 150] [--session path] [--relogin]
+```
+
+One JSON event per line on stdout (event names/keys are the stable contract):
+
+| Event | Meaning |
 |---|---|
-| `{"event":"iniciando"}` | processo iniciou |
-| `{"event":"devices","devices":[...]}` | sessão em cache válida → direto, sem QR |
-| `{"event":"sessao_invalida","motivo":"..."}` | cache existia, era inválido → segue para QR |
-| `{"event":"qr","png":"C:\\...\\out.png"}` | QR gerado — escanear no Smart Life (+ → Scan → Confirmar login) |
-| `{"event":"aguardando","restante":137}` | a cada ~2s até o app confirmar |
-| `{"event":"erro","mensagem":"..."}` | qualquer falha (exit ≠ 0) |
+| `{"event":"iniciando"}` | process started |
+| `{"event":"devices","devices":[...]}` | valid cached session → straight to the list, no QR |
+| `{"event":"sessao_invalida","motivo":"..."}` | cache existed but was invalid → falls through to QR |
+| `{"event":"qr","png":"C:\\...\\out.png"}` | QR generated — scan in Smart Life (Me → Scan → Confirm login) |
+| `{"event":"aguardando","restante":137}` | every ~2s until the app confirms |
+| `{"event":"erro","mensagem":"..."}` | any failure (exit ≠ 0) |
 
-`status`/`set` respondem um único evento:
+`status` / `set` answer a single event:
 
 ```json
 {"event":"status","ligada":true,"dps":{"1":true,"20":1199,...}}
 ```
 
-`dps` = estado real lido da tomada (`set` sempre relê depois de comandar); DP 1
-é o relé típico (`--dp`), 19/20/22 são metering (corrente/tensão/potência).
+Exit codes: `0` ok · `2` usage · `3` QR expired · `1` error. Each device carries `name`, `id`, `local_key`, `ip`, `online`, `category`, `product_name`, `model` and its DPs (`status`, `function`, `status_range`, `local_strategy`).
 
-Códigos de saída: `0` ok · `2` uso inválido · `3` QR expirou · `1` erro.
+## Security
 
-Cada device vem com `name`, `id`, `local_key`, `ip`, `online`, `category`,
-`product_name`, `model` e os DPs (`status`, `function`, `status_range`, `local_strategy`).
+- Account session tokens are written **atomically with mode 600** to `~/.config/boca-tuya-bridge/session.json`; auto-refresh keeps the cache alive — you only scan a new QR when the login expires for good.
+- **localKeys only ever go to stdout** (the `devices` event / the `print` table) — never logged, never saved in plain text beyond the session cache.
+- The login QR expires in ~1–2 min (`--timeout`, default 150s).
+- Whoever can read this process's stdout can read your keys — run it on a trusted machine.
 
-## Segurança
-
-- A sessão (tokens da conta) é gravada **atomicamente com modo 600** em `~/.config/boca-tuya-bridge/session.json`; auto-refresh mantém o cache vivo — você só escaneia de novo quando o login expira de vez.
-- **localKeys saem apenas no evento `devices` do stdout** — nada é logado nem gravado em texto claro além do cache de sessão.
-- O QR do Tuya expira em ~1–2 min (`--timeout`, padrão 150s).
-- Quem pode ler o stdout deste processo pode ler as keys — rode no servidor confiável, com o stdout consumido pelo cortemes (página SUPERUSER, permissão própria).
-
-## Instalação
-
-```bash
-pip install git+https://github.com/BocaDeAngu/tuya-key-bridge@v0.1.0-boca
-```
-
-Requer Python 3.8+. Dependências: `tuya-device-sharing-sdk>=0.2.15` (MIT, Tuya) e `qrcode[pil]`.
-
-## Créditos
+## Credits
 
 - [tuya-device-sharing-sdk](https://github.com/tuya/tuya-device-sharing-sdk) — Tuya, MIT
-- [vineetchoudhary/tuya-local-key](https://github.com/vineetchoudhary/tuya-local-key) — inspiração do fluxo QR (sem licença: não derivamos código)
-- [Home Assistant Tuya integration](https://www.home-assistant.io/integrations/tuya/) / [tuya-local](https://github.com/make-all/tuya-local) — o registro público de device-sharing usado no login
+- [tinytuya](https://github.com/jasonacox/tinytuya) — Jason Cox et al., MIT (local protocol 3.5)
+- [vineetchoudhary/tuya-local-key](https://github.com/vineetchoudhary/tuya-local-key) — QR-flow inspiration (unlicensed: no code derived)
+- [Home Assistant Tuya integration](https://www.home-assistant.io/integrations/tuya/) / [tuya-local](https://github.com/make-all/tuya-local) — the public device-sharing registration used for login
 
-MIT © BocaDeAngu — ver `LICENSE`.
+MIT © BocaDeAngu — see [LICENSE](LICENSE).
