@@ -4,15 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "boca-tuya-bridge"
-version = "0.2.2"
+version = "0.2.3"
 description = "NDJSON bridge of Smart Life/Tuya localKeys via QR login (no dev account) — clean-room reimplementation on the official SDK, plus local control (tinytuya, protocol 3.5)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.8"
 dependencies = [
-    "tuya-device-sharing-sdk>=0.2.15",
-    "qrcode[pil]>=7.4",
-    "cryptography>=41",
+    # Exact pins (versions proven against real plug id 13, tasks 0365/0364.2) —
+    # floating ranges could silently install untested releases on future builds.
+    "tuya-device-sharing-sdk==0.2.15",
+    "qrcode[pil]==8.2",
+    "cryptography==50.0.1",
     "tinytuya==1.20.0",
 ]
 
