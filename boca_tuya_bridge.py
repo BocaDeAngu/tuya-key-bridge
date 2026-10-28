@@ -15,6 +15,7 @@ Orchestrated use (your app spawns it and reads stdout):
     python -m boca_tuya_bridge print [--user-code X]                # human mode: QR opens in viewer, table
     python -m boca_tuya_bridge status --device-id X --ip Y --dp 1   # key via stdin
     python -m boca_tuya_bridge set --device-id X --ip Y --dp 1 --ligar true
+    python -m boca_tuya_bridge scan                                 # LAN discovery (UDP), NDJSON device events
 
 `run` output: NDJSON — one JSON line per event, no stray text:
 
@@ -28,6 +29,11 @@ Orchestrated use (your app spawns it and reads stdout):
 
 Event names and keys above are the machine contract (kept stable); message
 texts are English.
+
+LAN discovery (`scan`, tinytuya UDP broadcast — same LAN only):
+
+    {"event":"device","ip":"192.168.0.48","gwId":"eb7e...","version":"3.5"}
+    {"event":"done","count":1}                                  # count 0 = none found
 
 Local control (status/set): `set` also emits "status" (post-command read):
 
@@ -287,6 +293,33 @@ def _key_from_stdin(args):
 
 
 # --------------------------------------------------------------------------- #
+# LAN discovery (tinytuya UDP broadcast) — the app matches gwId to device_id
+# --------------------------------------------------------------------------- #
+def scan(args):
+    """Machine mode: UDP discovery on the LAN, NDJSON device events + done.
+    tinytuya saves snapshot.json in the cwd — run from the temp dir."""
+    import tinytuya
+
+    os.chdir(tempfile.gettempdir())
+    try:
+        achados = tinytuya.deviceScan(verbose=False, maxretry=3) or {}
+    except Exception as e:
+        emit_event({"event": "erro", "mensagem": f"scan failed: {e}"})
+        return 1
+    n = 0
+    for ip, d in achados.items():
+        if not isinstance(d, dict):
+            continue
+        emit_event({"event": "device",
+                    "ip": str(d.get("ip") or ip),
+                    "gwId": str(d.get("gwId") or d.get("id") or ""),
+                    "version": str(d.get("version") or "")})
+        n += 1
+    emit_event({"event": "done", "count": n})
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Main flow (shared between run and print)
 # --------------------------------------------------------------------------- #
 def _collect_devices(args, on_event):
@@ -446,7 +479,7 @@ def print_human(args):
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="boca_tuya_bridge", description="NDJSON bridge of Smart Life/Tuya localKeys (QR login, no dev account)")
-    p.add_argument("command", choices=["run", "print", "status", "set"], help="run=NDJSON (machine) · print=human (QR opens, table) · status=read · set=on/off")
+    p.add_argument("command", choices=["run", "print", "status", "set", "scan"], help="run=NDJSON (machine) · print=human (QR opens, table) · status=read · set=on/off · scan=LAN discovery (NDJSON)")
     p.add_argument("--user-code", help="Smart Life User Code (Me > Account and Security)")
     p.add_argument("--device-id", help="[status/set] device id")
     p.add_argument("--ip", help="[status/set] device IP on the LAN")
@@ -454,7 +487,7 @@ def main(argv=None):
     p.add_argument("--dp", type=int, default=1, help="[status/set] relay DP (default 1)")
     p.add_argument("--ligar", choices=("true", "false"), help="[set] true=on, false=off (flag kept for the machine contract)")
     p.add_argument("--versao", choices=("3.1", "3.3", "3.4", "3.5"), default=DEFAULT_VERSION, help="[status/set] device protocol")
-    p.add_argument("--timeout", type=int, default=None, help="[run/print] seconds waiting for the scan (150) · [status/set] socket timeout in s (5)")
+    p.add_argument("--timeout", type=int, default=None, help="[run/print] seconds waiting for the QR (150) · [status/set] socket timeout in s (5) · [scan] unused (discovery takes seconds)")
     p.add_argument("--qr-png", default=DEFAULT_QR_PNG, help="where to save the QR PNG")
     p.add_argument("--session", default=DEFAULT_SESSION, help="session cache path (600)")
     p.add_argument("--qr-scheme", choices=["smartlife", "tuyaSmart"], default="smartlife", help="QR prefix (Smart Life reads both)")
@@ -477,6 +510,16 @@ def main(argv=None):
                 emit_event({"event": "status", **local_command(args.device_id, args.ip, key, args.dp, args.ligar == "true", args.versao, timeout)})
             return 0
         except Exception as e:
+            emit_event({"event": "erro", "mensagem": str(e)})
+            return 1
+
+    if args.command == "scan":
+        try:
+            return scan(args)
+        except KeyboardInterrupt:
+            emit_event({"event": "erro", "mensagem": "interrupted"})
+            return 130
+        except Exception as e:  # never a raw traceback to the reader
             emit_event({"event": "erro", "mensagem": str(e)})
             return 1
 
